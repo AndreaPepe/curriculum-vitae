@@ -1,0 +1,24 @@
+*~
+*.dvi
+*.aux
+*.log
+*.out
+*.blg
+*.bbl
+*.lof
+*.lot
+*.toc
+*.maf
+*.nlo
+*.mtc
+*.mtc?
+*.bak
+*.backup
+*.snm
+*.nav
+*.vrb
+
+# typical names - change these if needed
+main*.pdf
+CV_Pepe_Andrea_EN*.pdf
+CV_Pepe_Andrea_IT*.pdf

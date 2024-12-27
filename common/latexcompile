@@ -1,0 +1,449 @@
+#!/bin/bash
+
+# Author:       Andrea Pepe     <pepe.andmj@gmail.com>
+# Last update:  Dec 24th, 2024
+# Version:      1.0.0
+
+function usage() {
+	if [ ! -z "$1" ]; then
+		echo "$1"
+		echo
+	fi
+	cat <<EOF
+Usage: ${0} COMMAND [OPTIONS]
+
+
+COMMAND
+        --help          Display this help message
+        --compile       Compile LaTex sources
+        --log           Analyze log file
+        --show          Display the compiled pdf inside an editor
+        --checkpages    Perform a check on the number of pages
+        --filelist      Generate file dependencies
+
+OPTIONS
+        Run: ${0} COMMAND --help
+        to retrieve options for each specific command.
+
+EOF
+}
+
+function compile_usage() {
+	cat <<EOF
+Usage: ${0} --compile MODE <basename> <date> [OPTIONS]
+
+MODE
+        --singlerun     Only run build a single time
+        --multipleruns  Compile multiple times
+
+ARGS
+        basename        The basename of the main LaTex file
+        date            The date to put on the output PDF
+
+OPTIONS
+        Any pdflatex option
+
+EOF
+}
+
+################################## Compile ####################################
+function compile() {
+	if [ ! -z "$1" ] && [ "$1" == "--help" ]; then
+		compile_usage
+		exit 0
+	fi
+
+	if [ $# -lt 3 ]; then
+		compile_usage
+		exit 1
+	fi
+
+	if [ "${1}" == "--singlerun" ]; then
+		local MULTIPLERUNS=false
+	elif [ "${1}" == "--multipleruns" ]; then
+		local MULTIPLERUNS=true
+	else
+		compile_usage
+		exit 1
+	fi
+	shift
+	local BASENAME=${1}
+	shift
+	local DATE=${1}
+	shift
+	local OPTIONS="-file-line-error -halt-on-error ${*}"
+	local MESSAGE="LaTex Warning:.* Rerun"
+
+	${LATEX} ${OPTIONS} \\def\pdfdate{${DATE}} \\input{${BASENAME}}
+	local EXIT_CODE=$?
+
+	while ${MULTIPLERUNS}; do
+		${LATEX} ${OPTIONS} \\def\pdfdate{${DATE}} \\input{${BASENAME}}
+		EXIT_CODE=$?
+		grep "${MESSAGE}" ${BASENAME}.log &>/dev/null
+		if [ $? -eq 1 ]; then
+			break
+		fi
+	done
+	exit ${EXIT_CODE}
+}
+
+#################################### Log ######################################
+function log_usage() {
+	cat <<EOF
+Usage: ${0} --log [MODE] <log-file>
+
+MODE
+        --summary       Summary version of log
+        --short         Short version of log
+        --long          Long version of log (default)
+        --error         Error version of log
+
+ARGS
+        log-file        The log file to analyze
+EOF
+}
+
+function log_count() {
+	echo -e "$@ : $(grep "$@" ${_LOG} | wc -l)"
+}
+
+function log_long_single() {
+	echo "----- $@ -----"
+	echo ""
+	grep -n -C 1 "$@" ${_LOG} || echo " ** None **"
+	echo ""
+}
+
+function log_long_single_quiet() {
+	grep "$@" ${_LOG} &>/dev/null
+	if [ $? -eq 0 ]; then
+		echo "----- $@ -----"
+		echo ""
+		grep -n -C 1 "$@" ${_LOG} || echo " ** None **"
+		echo ""
+	fi
+}
+
+function log_summary() {
+	echo "----- Log Summary -----"
+	log_count "Fatal error"
+	log_count "Error"
+	# NOTE: maybe add more common errors and warnings
+	log_count "Missing } inserted"
+	log_count "Undefined control sequence"
+	log_count "Paragraph ended before .* was complete"
+	log_count Warning
+	log_count "No file"
+	log_count ATTENTION
+	log_count FIXME
+	log_count "pdfTex warning"
+	log_count "Bad box"
+	log_count "Underfull"
+	log_count "Overfull"
+}
+
+function log_short() {
+	echo "----- Log report (short) -----"
+	grep "Fatal error" ${_LOG} || true
+	grep "Error" ${_LOG} || true
+	# NOTE: maybe add more common errors and warnings
+	grep "Missing } inserted" ${_LOG} || true
+	grep "Undefined control sequence" ${_LOG} || true
+	grep "Paragraph ended before .* was complete" ${_LOG} || true
+	grep Warning ${_LOG} || true
+	grep "No file" ${_LOG} || true
+	grep ATTENTION ${_LOG} || true
+	grep FIXME ${_LOG} || true
+	echo " ---- Minor warnings: ---- "
+	log_count "pdfTex warning"
+	log_count "Bad box"
+	log_count "Underfull"
+	log_count "Overfull"
+}
+
+function log_long() {
+	echo "----- Log report -----"
+	log_long_single "Fatal error"
+	log_long_single "Error"
+	# NOTE: maybe add more common errors and warnings
+	log_long_single "Missing } inserted"
+	log_long_single "Undefined control sequence"
+	log_long_single "Paragraph ended before .* was complete"
+	log_long_single Warning
+	log_long_single "No file"
+	log_long_single ATTENTION
+	log_long_single FIXME
+	log_long_single "pdfTex warning"
+	log_long_single "Bad box"
+	log_long_single "Underfull"
+	log_long_single "Overfull"
+}
+
+function log_error() {
+	echo "----- Log Error report -----"
+	grep -E "Error|Fatal error" ${_LOG} &>/dev/null
+	if [ $? -eq 0 ]; then
+		local _RET=1
+	else
+		local _RET=0
+	fi
+	log_long_single_quiet "Fatal error"
+	log_long_single_quiet "Error"
+	# NOTE: maybe add more common errors and warnings
+	log_long_single_quiet "Missing } inserted"
+	log_long_single_quiet "Undefined control sequence"
+	log_long_single_quiet "Paragraph ended before .* was complete"
+	log_summary
+	return ${_RET}
+}
+
+function log() {
+	if [ ! -z "$1" ] && [ "$1" == "--help" ]; then
+		log_usage
+		exit 0
+	fi
+
+	if [ $# -lt 1 ]; then
+		log_usage
+		exit 1
+	fi
+
+	if [ $# -eq 1 ]; then
+		_LOG=${1}
+		_OUTPUT=long
+	elif [ "${1}" == "--summary" ]; then
+		_LOG=${2}
+		_OUTPUT=summary
+	elif [ "${1}" == "--short" ]; then
+		_LOG=${2}
+		_OUTPUT=short
+	elif [ "${1}" == "--long" ]; then
+		_LOG=${2}
+		_OUTPUT=long
+	elif [ "${1}" == "--error" ]; then
+		_LOG=${2}
+		_OUTPUT=error
+	else
+		log_usage
+		exit 1
+	fi
+
+	if [ ! -f ${_LOG} ]; then
+		echo "ERROR: Log file ${_LOG} not found"
+		exit 1
+	fi
+
+	case "${_OUTPUT}" in
+	summary)
+		log_summary
+		;;
+	short)
+		log_short
+		;;
+	long)
+		log_long
+		;;
+	error)
+		log_error
+		exit $?
+		;;
+	*)
+		# this should never happen
+		echo "Unexpected error in function ${FUNCNAME}"
+		log_usage
+		exit 1
+		;;
+	esac
+}
+
+#################################### Show #####################################
+function show_usage() {
+	cat <<EOF
+Usage: ${0} --show <filename>
+
+ARGS
+        filename        The PDF filename to open in an editor
+
+EOF
+}
+
+function show() {
+	if [ $# -ne 1 ]; then
+		show_usage
+		exit 1
+	fi
+
+	if [ "$1" == "--help" ]; then
+		show_usage
+		exit 0
+	fi
+
+	local VIEWERS="okular kpdf evince acroread open zathura"
+	for v in $VIEWERS; do
+		which $v &>/dev/null
+		if [ $? -eq 0 ]; then
+			local LATEXSHOW=$v
+			break
+		fi
+	done
+
+	if [ -z "${LATEXSHOW}" ]; then
+		echo "Impossible to show ${1}!"
+		echo "Please edit the variable VIEWERS in this script ($0)"
+		echo "or install one of the following applications:"
+		echo "  ${VIEWERS}"
+		exit 1
+	fi
+
+	${LATEXSHOW} "${1}" &>/dev/null
+}
+
+################################ Checkpages ###################################
+function checkpages_usage() {
+	cat <<EOF
+Usage: ${0} --checkpages <pdf-file> <num-pages>
+
+ARGS
+        pdf-file        The PDF file to check
+        num-pages       The maximum number of pages the PDF should have
+
+EOF
+}
+
+function checkpages() {
+	if [ ! -z "$1" ] && [ "$1" == "--help" ]; then
+		checkpages_usage
+		exit 0
+	fi
+
+	if [ $# -ne 2 ]; then
+		checkpages_usage
+		exit 1
+	fi
+
+	local PDFFILE=${1}
+	local MAXPAGES=${2}
+
+	if [ ! -r $PDFFILE ]; then
+		echo "File $PDFFILE not found"
+		exit 1
+	fi
+
+	if ! [[ $MAXPAGES =~ ^[0-9]+$ ]]; then
+		echo "Invalid max_pages argument: $MAXPAGES"
+		exit 1
+	fi
+
+	if [ $MAXPAGES -le 0 ]; then
+		echo "Invalid max_pages argument: $MAXPAGES"
+		exit 1
+	fi
+
+	pdfinfo $PDFFILE &>/dev/null
+
+	if [ $? -ne 0 ]; then
+		echo "Error reading PDF information"
+		exit 1
+	fi
+
+	PAGES=$(pdfinfo $PDFFILE | grep Pages | cut -d ':' -f 2)
+
+	PAGES=${PAGES// /}
+
+	if [ "$PAGES" -gt "$MAXPAGES" ]; then
+		echo ""
+		echo "-------- PAPER LENGHT WARNING! --------"
+		echo ""
+		echo "$PDFFILE has $PAGES pages, while maximum is $MAXPAGES"
+		echo ""
+	else
+		echo "$PDFFILE has $PAGES pages."
+		echo "Maximum of $MAXPAGES is respected."
+	fi
+}
+
+################################# Filelist ####################################
+function filelist_usage() {
+	cat <<EOF
+Usage: ${0} --filelist <directory> <file-extension> [...]
+
+ARGS
+        directory       The root directory where to look for dependencies
+        file-extensions The file extensions to look for 
+                        (it can be a whitespace-separated list)
+
+EOF
+}
+
+function filelist() {
+	if [ ! -z "$1" ] && [ "$1" == "--help" ]; then
+		filelist_usage
+		exit 0
+	fi
+
+	if [ $# -lt 2 ]; then
+		filelist_usage
+		exit 1
+	fi
+
+	local _DIR=${1}
+	shift
+
+	while [ ! -z "$1" ]; do
+		echo $(find ${_DIR} | grep -E "$1\$")
+		shift
+	done
+}
+
+function detectLatex() {
+	LATEX=
+	LATEX_CANDIDATES=(pdflatex lualatex)
+
+	for candidate in ${LATEX_CANDIDATES}; do
+		which ${candidate} &>/dev/null
+		if [ $? -eq 0 ]; then
+			LATEX=${candidate}
+			break
+		fi
+	done
+
+	if [ -z "LATEX" ]; then
+		echo "ERROR: no LaTex compiler found on the system!"
+		echo "Please install one of the supported ones:"
+		for c in ${LATEX_CANDIDATES}; do
+			echo "  - $c"
+		done
+		exit 0
+	fi
+}
+
+#################################### MAIN #####################################
+detectLatex
+_CMD=${1}
+shift
+
+case "${_CMD}" in
+"--help")
+	usage
+	;;
+"--compile")
+	compile $*
+	;;
+"--log")
+	log $*
+	;;
+"--show")
+	show $*
+	;;
+"--checkpages")
+	checkpages $*
+	;;
+"--filelist")
+	filelist $*
+	;;
+*)
+	usage "ERROR: command ${_CMD} not supported!"
+	exit 1
+	;;
+esac
